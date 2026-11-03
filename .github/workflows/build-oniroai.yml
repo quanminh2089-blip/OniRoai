@@ -1,0 +1,133 @@
+name: Rebuild OniRoai APK from recovered game
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  rebuild:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GODOT_VERSION: 4.5.1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify the supplied files
+        run: |
+          set -euo pipefail
+          test -f base/MinhQuan-TienDon-offline.apk
+          test -f base/OniRoai-recovered.zip
+          python3 - <<'PY'
+          from zipfile import ZipFile
+          for name in ('base/MinhQuan-TienDon-offline.apk','base/OniRoai-recovered.zip'):
+              with ZipFile(name) as z:
+                  assert z.testzip() is None, 'CRC error: ' + name
+              print('ZIP valid:', name)
+          PY
+      - name: Download Godot RE Tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p tools/gdre logs
+          curl -fL --retry 3 \
+            https://github.com/GDRETools/gdsdecomp/releases/download/v2.7.4/GDRE_tools-v2.7.4-linux.zip \
+            -o tools/gdre.zip
+          unzip -q tools/gdre.zip -d tools/gdre
+          GDRE="$(find "$PWD/tools/gdre" -type f \( -iname '*x86_64*' -o -iname '*linux*' -o -name gdre_tools \) | head -n 1)"
+          if [[ -z "$GDRE" ]]; then
+            echo 'Cannot find GDRE executable in distribution' >&2
+            find tools/gdre -type f | head -50
+            exit 1
+          fi
+          chmod +x "$GDRE"
+          echo "GDRE_EXECUTABLE=$GDRE" >> "$GITHUB_ENV"
+      - name: Restore editable Godot project from original APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p project
+          "$GDRE_EXECUTABLE" --headless \
+            "--recover=$PWD/base/MinhQuan-TienDon-offline.apk" \
+            "--output-dir=$PWD/project" 2>&1 | tee logs/gdre-recovery.log
+          test -f project/project.godot || { echo 'Missing recovered project.godot'; exit 1; }
+          test -f project/scenes/boot.tscn || { echo 'Missing recovered boot.tscn'; exit 1; }
+      - name: Add OniRoai key screen and recovered artwork
+        run: |
+          set -euo pipefail
+          python3 scripts/prepare_project.py "$PWD/project" "$PWD" 2>&1 | tee logs/prepare.log
+      - name: Install official Godot editor and Android export templates
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.cache/oniroai" "$HOME/.local/share/godot/export_templates/4.5.1.stable"
+          BASE="https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable"
+          curl -fL --retry 3 "$BASE/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip" -o "$HOME/.cache/oniroai/godot.zip"
+          unzip -oq "$HOME/.cache/oniroai/godot.zip" -d "$HOME/.cache/oniroai"
+          chmod +x "$HOME/.cache/oniroai/Godot_v${GODOT_VERSION}-stable_linux.x86_64"
+          echo "$HOME/.cache/oniroai" >> "$GITHUB_PATH"
+          curl -fL --retry 3 "$BASE/Godot_v${GODOT_VERSION}-stable_export_templates.tpz" -o "$HOME/.cache/oniroai/templates.tpz"
+          unzip -joq "$HOME/.cache/oniroai/templates.tpz" \
+            'templates/android_debug.apk' 'templates/android_release.apk' 'templates/version.txt' \
+            -d "$HOME/.local/share/godot/export_templates/4.5.1.stable"
+      - name: Install Android SDK build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            'platforms;android-35' 'build-tools;35.0.1' 'platform-tools' >/dev/null || true
+          test -x "$ANDROID_HOME/build-tools/35.0.1/apksigner"
+      - name: Configure Godot Android SDK paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p project/tools
+          cp scripts/configure_android.gd project/tools/configure_android.gd
+          "$HOME/.cache/oniroai/Godot_v${GODOT_VERSION}-stable_linux.x86_64" \
+            --headless --editor --path project --script res://tools/configure_android.gd 2>&1 | tee logs/sdk.log
+      - name: Import recovered models and scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$HOME/.cache/oniroai/Godot_v${GODOT_VERSION}-stable_linux.x86_64" \
+            --headless --editor --path project --import 2>&1 | tee logs/import.log
+          if grep -E 'SCRIPT ERROR|Parse Error|Failed to load script' logs/import.log; then exit 1; fi
+      - name: Create Android debug signing certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.android"
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            keytool -genkeypair -noprompt -keystore "$HOME/.android/debug.keystore" \
+              -alias androiddebugkey -storepass android -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname 'CN=Android Debug,O=Android,C=US'
+          fi
+      - name: Export Android ARM64 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p output
+          "$HOME/.cache/oniroai/Godot_v${GODOT_VERSION}-stable_linux.x86_64" \
+            --headless --path project --export-debug Android "$PWD/output/OniRoai-recovered.apk" \
+            2>&1 | tee logs/export.log
+          test -s output/OniRoai-recovered.apk
+          "$ANDROID_HOME/build-tools/35.0.1/apksigner" verify \
+            --verbose output/OniRoai-recovered.apk
+          unzip -t output/OniRoai-recovered.apk | tail -2
+          sha256sum output/OniRoai-recovered.apk | tee logs/apk-sha256.txt
+      - name: Upload APK or error logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: OniRoai-Recovered-APK-and-Logs
+          path: |
+            output/*.apk
+            logs/*
+          if-no-files-found: warn
+          retention-days: 14

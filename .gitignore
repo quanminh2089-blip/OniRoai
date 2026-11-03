@@ -1,0 +1,5 @@
+project/
+logs/
+output/
+*.tmp
+.DS_Store
