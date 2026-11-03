@@ -89,7 +89,7 @@ jobs:
           mkdir -p project/tools
           cp scripts/configure_android.gd project/tools/configure_android.gd
           "$HOME/.cache/oniroai/Godot_v${GODOT_VERSION}-stable_linux.x86_64" \
-            --headless --editor --path project --script res://tools/configure_android.gd 2>&1 | tee logs/sdk.log
+            --headless --editor --path project --script res://tools/configure_android.gd --quit-after 2 2>&1 | tee logs/sdk.log
       - name: Import recovered models and scripts
         shell: bash
         run: |
