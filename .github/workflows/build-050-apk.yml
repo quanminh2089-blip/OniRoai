@@ -1,0 +1,172 @@
+name: Build OniRoai 0.5.0 restored APK and source
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/build-050-apk.yml
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Restore source and build Android ARM64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GODOT_VERSION: '4.5.1'
+    steps:
+      - name: Checkout OniRoai
+        uses: actions/checkout@v4
+
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Recover source directly from original APK 0.5.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p input project output logs tools/gdre
+          test -s base/OniRoai-0.5.0-apk.zip
+          unzip -p base/OniRoai-0.5.0-apk.zip OniRoai-0.5.0.apk > input/OniRoai-0.5.0.apk
+          unzip -t input/OniRoai-0.5.0.apk | tail -2
+          sha256sum input/OniRoai-0.5.0.apk | tee logs/original-apk-sha256.txt
+          curl -fL --retry 3 https://github.com/GDRETools/gdsdecomp/releases/download/v2.7.4/GDRE_tools-v2.7.4-linux.zip -o tools/gdre.zip
+          unzip -q tools/gdre.zip -d tools/gdre
+          GDRE="$(find "$PWD/tools/gdre" -type f -name 'gdre_tools.x86_64' | head -1)"
+          test -n "$GDRE"
+          chmod +x "$GDRE"
+          "$GDRE" --headless "--recover=$PWD/input/OniRoai-0.5.0.apk" "--output-dir=$PWD/project" 2>&1 | tee logs/recovery.log
+          test -f project/project.godot
+          test -f project/scenes/boot.tscn
+          SCRIPTS="$(find project/scripts -maxdepth 1 -name '*.gd' | wc -l)"
+          echo "Recovered GDScript count: $SCRIPTS" | tee logs/script-count.txt
+          test "$SCRIPTS" -ge 19
+
+      - name: Download Godot 4.5.1 and Android templates
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable"
+          mkdir -p "$HOME/godot" "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+          curl -fL --retry 3 "$BASE/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip" -o "$HOME/godot/godot.zip"
+          unzip -oq "$HOME/godot/godot.zip" -d "$HOME/godot"
+          chmod +x "$HOME/godot/Godot_v${GODOT_VERSION}-stable_linux.x86_64"
+          curl -fL --retry 3 "$BASE/Godot_v${GODOT_VERSION}-stable_export_templates.tpz" -o "$HOME/godot/templates.tpz"
+          unzip -joq "$HOME/godot/templates.tpz" 'templates/android_debug.apk' 'templates/android_release.apk' 'templates/version.txt' -d "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+          echo "GODOT=$HOME/godot/Godot_v${GODOT_VERSION}-stable_linux.x86_64" >> "$GITHUB_ENV"
+          "$HOME/godot/Godot_v${GODOT_VERSION}-stable_linux.x86_64" --headless --version
+
+      - name: Configure Android export, preserve restored gameplay
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > project/export_presets.cfg <<'PRESET'
+          [preset.0]
+          name="Android"
+          platform="Android"
+          runnable=true
+          advanced_options=false
+          dedicated_server=false
+          custom_features=""
+          export_filter="all_resources"
+          include_filter=""
+          exclude_filter=""
+          export_path="output/OniRoai-0.5.0-restored.apk"
+          encryption_include_filters=""
+          encryption_exclude_filters=""
+          encrypt_pck=false
+          encrypt_directory=false
+          script_export_mode=1
+
+          [preset.0.options]
+          gradle_build/use_gradle_build=false
+          package/unique_name="vn.minhquan.oniroai.restored050"
+          package/name="OniRoai Restored"
+          package/signed=true
+          package/app_category=6
+          version/code=50
+          version/name="0.5.0-restored"
+          architectures/armeabi-v7a=false
+          architectures/arm64-v8a=true
+          architectures/x86=false
+          architectures/x86_64=false
+          screen/immersive_mode=true
+          screen/edge_to_edge=false
+          permissions/internet=false
+          keystore/debug=""
+          keystore/debug_user=""
+          keystore/debug_password=""
+          keystore/release=""
+          keystore/release_user=""
+          keystore/release_password=""
+          PRESET
+          mkdir -p project/tools "$HOME/.android"
+          cp scripts/configure_android.gd project/tools/configure_android.gd
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            keytool -genkeypair -noprompt \
+              -keystore "$HOME/.android/debug.keystore" \
+              -alias androiddebugkey -storepass android -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname 'CN=Android Debug,O=Android,C=US'
+          fi
+          "$GODOT" --headless --editor --path project --script res://tools/configure_android.gd --quit-after 2 2>&1 | tee logs/sdk-config.log
+
+      - name: Import all restored 3D assets and scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$GODOT" --headless --editor --path project --import 2>&1 | tee logs/import.log
+          if grep -E 'SCRIPT ERROR|Parse Error|Failed to load script' logs/import.log; then
+            echo 'Godot reported script parsing/import failures' >&2
+            exit 1
+          fi
+
+      - name: Export restored game APK (Android ARM64)
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$GODOT" --headless --path project --export-debug Android "$PWD/output/OniRoai-0.5.0-restored.apk" 2>&1 | tee logs/export.log
+          test -s output/OniRoai-0.5.0-restored.apk
+          unzip -t output/OniRoai-0.5.0-restored.apk | tail -2
+          APK_SIGNER="$ANDROID_HOME/build-tools/35.0.1/apksigner"
+          if [ -x "$APK_SIGNER" ]; then
+            "$APK_SIGNER" verify --verbose output/OniRoai-0.5.0-restored.apk | tee logs/signature.txt
+          fi
+          sha256sum output/OniRoai-0.5.0-restored.apk | tee logs/apk-sha256.txt
+
+      - name: Preserve complete restored Godot source as ZIP
+        if: always()
+        shell: bash
+        run: |
+          if [ -d project ] && [ -f project/project.godot ]; then
+            python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, ZIP_DEFLATED
+          root = Path('project')
+          out = Path('output/OniRoai-0.5.0-editable-Godot-project.zip')
+          out.parent.mkdir(exist_ok=True)
+          with ZipFile(out, 'w', compression=ZIP_DEFLATED, compresslevel=6, allowZip64=True) as z:
+              for p in root.rglob('*'):
+                  if p.is_file() and '.godot' not in p.parts:
+                      z.write(p, p.relative_to(root))
+          print('Saved:',out, out.stat().st_size)
+          PY
+          fi
+
+      - name: Upload restored APK, source ZIP, and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: OniRoai-050-APK-and-Source
+          path: |
+            output/*.apk
+            output/*.zip
+            logs/*
+          if-no-files-found: warn
+          retention-days: 30
