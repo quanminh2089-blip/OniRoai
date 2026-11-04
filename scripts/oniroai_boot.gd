@@ -26,7 +26,6 @@ func _ready() -> void :
 	var row = VBoxContainer.new();row.name = "Brand";row.position = Vector2(70, 90);row.custom_minimum_size = Vector2(540, 0);row.add_theme_constant_override("separation", 14);curtain.add_child(row)
 	var avatar = TextureRect.new();avatar.texture = Art.sprite("avatar");avatar.custom_minimum_size = Vector2(132, 132);avatar.expand_mode = TextureRect.EXPAND_IGNORE_SIZE;avatar.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED;avatar.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN;row.add_child(avatar)
 	row.add_child(UI.label("OniRoai", 68, Color("e5ecea")))
-	row.add_child(UI.label("MỘT MÌNH. BỐN ĐỐI THỦ.", 15, Color("ddb57b")))
 	var box = Control.new();box.name = "LoadingCard";box.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT);box.position = Vector2(65, size.y - 170);box.size = Vector2(550, 125);curtain.add_child(box)
 	var frame = TextureRect.new();frame.texture = Art.sprite("ammo");frame.expand_mode = TextureRect.EXPAND_IGNORE_SIZE;frame.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT);box.add_child(frame)
 	status = UI.label("Đang chuẩn bị…", 18, Color("dbe7e5"));status.position = Vector2(35, 27);box.add_child(status)
