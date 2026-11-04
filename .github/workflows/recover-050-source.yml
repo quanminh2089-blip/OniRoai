@@ -1,0 +1,70 @@
+name: Recover OniRoai 0.5.0 editable source
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  recover:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unpack original APK and verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p input logs recovered output
+          unzip -p base/OniRoai-0.5.0-apk.zip OniRoai-0.5.0.apk > input/OniRoai-0.5.0.apk
+          test -s input/OniRoai-0.5.0.apk
+          unzip -t input/OniRoai-0.5.0.apk | tail -3
+          sha256sum input/OniRoai-0.5.0.apk | tee logs/input-sha256.txt
+      - name: Download Godot RE Tools v2.7.4
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 https://github.com/GDRETools/gdsdecomp/releases/download/v2.7.4/GDRE_tools-v2.7.4-linux.zip -o /tmp/gdre.zip
+          mkdir -p /tmp/gdre
+          unzip -q /tmp/gdre.zip -d /tmp/gdre
+          GDRE="$(find /tmp/gdre -type f -name 'gdre_tools.x86_64' | head -1)"
+          test -n "$GDRE"
+          chmod +x "$GDRE"
+          echo "GDRE=$GDRE" >> "$GITHUB_ENV"
+      - name: Recover project and decompile scripts
+        shell: bash
+        run: |
+          set -uo pipefail
+          "$GDRE" --headless "--recover=$PWD/input/OniRoai-0.5.0.apk" "--output-dir=$PWD/recovered" > logs/recover.log 2>&1
+          rc=$?
+          echo "GDRE exit code: $rc" | tee -a logs/recover.log
+          tail -n 50 logs/recover.log
+          echo "$rc" > logs/recover-exit-code.txt
+          exit 0
+      - name: Audit recovered files and package project
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          from collections import Counter
+          import json,zipfile
+          root=Path('recovered')
+          paths=[p for p in root.rglob('*') if p.is_file()]
+          ext=Counter(p.suffix.lower() for p in paths)
+          result={'file_count':len(paths),'gd_scripts':ext['.gd'],'compiled_gdc':ext['.gdc'],'tscn_scenes':ext['.tscn'],'compiled_scn':ext['.scn'],'has_project_godot':(root/'project.godot').exists(),'extensions':dict(ext)}
+          Path('logs/audit.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
+          print(json.dumps(result,indent=2))
+          with zipfile.ZipFile('output/OniRoai-0.5.0-recovered-source.zip','w',compression=zipfile.ZIP_DEFLATED,compresslevel=6,allowZip64=True) as z:
+              for p in paths:z.write(p,p.relative_to(root))
+              z.write('logs/audit.json','RECOVERY_AUDIT.json')
+              z.write('logs/recover.log','RECOVERY_LOG.txt')
+          PY
+      - name: Upload recovered source ZIP and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: OniRoai-050-Recovered-Source
+          path: |
+            output/*.zip
+            logs/*
+          if-no-files-found: warn
+          retention-days: 30
