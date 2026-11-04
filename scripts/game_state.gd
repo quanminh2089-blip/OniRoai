@@ -1,6 +1,6 @@
 extends Node
 
-const VERSION = "1.3.0"
+const VERSION = "1.4.0"
 var bot_difficulty = 1
 var matches_played = 0
 var match_wins = 0

@@ -8,6 +8,14 @@ const BULLET_DAMAGE: int = 10
 var health: int = MAX_HEALTH
 var dead = false
 var visual: Node3D
+# ESP là hiệu ứng trực tiếp trên model NPC nên không phụ thuộc HUD 2D.
+const ESP_SHADER := preload("res://assets/oniroai/esp_enemy_green.gdshader")
+var esp_material: ShaderMaterial
+var esp_meshes: Array[MeshInstance3D] = []
+var esp_original_overlays: Dictionary = {}
+var esp_distance_label: Label3D
+var esp_active: bool = false
+var esp_update_clock: float = 0.0
 var anim: AnimationPlayer
 var skeleton: Skeleton3D
 var aim_pivot: Node3D
@@ -40,6 +48,7 @@ func _ready() -> void :
 	name = "Red_" + str(bot_id + 1);bot_name = ["BÁO", "SÓI", "ƯNG", "CÁO"][bot_id];rng.seed = 4900 + bot_id * 71 + world.round_number * 313;collision_layer = 4;collision_mask = 1 | 4
 	var col = CollisionShape3D.new(); var capsule = CapsuleShape3D.new();capsule.height = 1.8;capsule.radius = 0.3;col.shape = capsule;col.position.y = 0.9;add_child(col)
 	visual = Game.model("soldier.glb");visual.scale = Vector3.ONE * 0.85;add_child(visual)
+	_setup_esp_visuals()
 	anim = visual.find_children("*", "AnimationPlayer", true, false)[0];skeleton = visual.find_children("*", "Skeleton3D", true, false)[0]
 	for clip in ["idle", "aim_idle", "aim_walk", "aim_run", "ready_idle", "ready_walk"]:
 		if anim.has_animation(clip): anim.get_animation(clip).loop_mode = Animation.LOOP_LINEAR
@@ -53,6 +62,57 @@ func _ready() -> void :
 	sound = AudioStreamPlayer3D.new();sound.max_distance = 52;sound.unit_size = 3;sound.volume_db = -17;sound.max_polyphony = 3;add_child(sound)
 	steps = AudioStreamPlayer3D.new();steps.max_distance = 16;steps.unit_size = 2;steps.volume_db = -23;steps.stream = Game.asset("walking.ogg");add_child(steps)
 	rotation.y = atan2(player.position.x - position.x, player.position.z - position.z);_animation("idle");call_deferred("_start_ik")
+# Giữ nguyên vật liệu gốc để khi TẮT ESP, NPC trở lại bình thường.
+# Overlay dùng chính các MeshInstance3D của mẫu nhân vật, theo chuyển động xương.
+func _setup_esp_visuals() -> void:
+    esp_material = ShaderMaterial.new()
+    esp_material.shader = ESP_SHADER
+    for child in visual.find_children("*", "MeshInstance3D", true, false):
+        var mesh: MeshInstance3D = child as MeshInstance3D
+        if mesh == null:
+            continue
+        esp_meshes.append(mesh)
+        esp_original_overlays[mesh] = mesh.material_overlay
+    esp_distance_label = Label3D.new()
+    esp_distance_label.name = "ESP_Distance"
+    esp_distance_label.position = Vector3(0.0, 2.12, 0.0)
+    esp_distance_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+    esp_distance_label.no_depth_test = true
+    esp_distance_label.fixed_size = true
+    esp_distance_label.font = load("res://assets/fonts/DejaVuSans.ttf")
+    esp_distance_label.font_size = 40
+    esp_distance_label.pixel_size = 0.004
+    esp_distance_label.modulate = Color("#5eff71")
+    esp_distance_label.outline_size = 14
+    esp_distance_label.outline_modulate = Color(0.015, 0.05, 0.025, 0.96)
+    esp_distance_label.text = "0 m"
+    esp_distance_label.visible = false
+    add_child(esp_distance_label)
+
+func _set_esp_active(enabled: bool) -> void:
+    if esp_active == enabled:
+        return
+    esp_active = enabled
+    for mesh in esp_meshes:
+        if is_instance_valid(mesh):
+            mesh.material_overlay = esp_material if enabled else esp_original_overlays.get(mesh)
+    if is_instance_valid(esp_distance_label):
+        esp_distance_label.visible = enabled
+    esp_update_clock = 0.0
+
+func _process(delta: float) -> void:
+    var enabled: bool = Game.esp_enabled and not dead and is_instance_valid(world) and world.playing and not world.paused
+    if enabled != esp_active:
+        _set_esp_active(enabled)
+    if not enabled:
+        return
+    esp_update_clock -= delta
+    if esp_update_clock <= 0.0 and is_instance_valid(player) and is_instance_valid(esp_distance_label):
+        esp_update_clock = 0.10
+        # Godot dùng đơn vị 3D mặc định là mét; tính khoảng cách player -> NPC.
+        var distance_m: int = roundi(player.global_position.distance_to(global_position))
+        esp_distance_label.text = "%d m" % distance_m
+
 func _bone(suffix: String) -> String:
 	for i in range(skeleton.get_bone_count()):
 		var label = skeleton.get_bone_name(i)
@@ -163,6 +223,7 @@ func take_hit(_amount: int, headshot: bool = false) -> void :
 			sound.stream = Game.asset("enemy_hurt.ogg")
 			sound.play()
 		return
+	_set_esp_active(false)
 	dead = true;collision_layer = 0;collision_mask = 0;velocity = Vector3.ZERO
 	for ik in ik_solvers: ik.stop()
 	_animation("death");sound.stream = Game.asset("enemy_destroy.ogg");sound.play();gun.hide();world.enemy_killed(global_position, headshot, bot_name)

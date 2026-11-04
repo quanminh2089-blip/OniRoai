@@ -71,7 +71,7 @@ func _ready() -> void:
 
     var info := _label("HỖ TRỢ NGẮM  •  TÙY CHỌN TRONG GAME", 13, MUTED)
     col.add_child(info)
-    _feature(col, "ESP ĐỊCH", "Khung viền, vị trí đầu và khoảng cách", "esp", Game.esp_enabled)
+    _feature(col, "ESP ĐỊCH", "Sáng xanh cả người địch + số mét trên đầu", "esp", Game.esp_enabled)
     _feature(col, "AIM ĐẦU", "Hỗ trợ khóa đầu khi ngắm hoặc bắn", "aim", Game.head_aim_enabled)
 
     var foot := _label("Bắn thân: -10 HP   •   Bắn đầu: -250 HP", 13, Color("#d5dce5"))
