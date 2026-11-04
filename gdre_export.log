@@ -1,0 +1,36 @@
+GDRE Tools v2.7.4
+Ubuntu 24.04.5 LTS 24.04, headless
+Opening file: ~/work/OniRoai/OniRoai/input/OniRoai-0.5.0.apk
+Loaded 137 imported files
+Detected Engine Version: 4.5.1.stable
+Detected Bytecode Revision: 4.5.0-stable (ebc36a7)
+Successfully loaded PCK!
+Version: 4.5.1.stable
+Verified 289 files, 4 files skipped (MD5 hash entry was empty)
+Extracted 293 files, no errors detected!
+Saved project config.
+
+
+********************************EXPORT REPORT********************************
+
+Totals:                                 
+Decompiled scripts:                     19
+Scripts not decompiled:                 0
+Imported resources for export session:  137
+Successfully converted:                 137
+Lossy:                                  84
+Rewrote metadata:                       117
+Non-importable conversions:             0
+Not converted:                          0
+Failed conversions:                     0
+-------------
+
+
+
+------------------------------------------------------------------------------------
+
+Use Godot editor version 4.5.1.stable to edit the project.
+
+*******************************************************************************
+
+Recovery finished in 00m22s
