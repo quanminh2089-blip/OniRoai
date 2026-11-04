@@ -43,8 +43,21 @@ var rng = RandomNumberGenerator.new()
 const MAG_SIZE = 30
 const RELOAD_DURATION = 2.45
 var walk_name = "aim_walk"
+# Tactical AI Extreme: 500 ms perception, 70% nominal aim, full squad coordination.
+const EXTREME_REACTION := 0.5
+const EXTREME_ACCURACY := 0.70
+const SQUAD_COORDINATION := 1.0
+var role: String = ""
+var stance_clock := 0.0
+var dodge_clock := 0.0
+var strafe_sign := 1.0
+var crouch_amount := 0.0
+var lean_amount := 0.0
+var tactical_goal := Vector3.INF
+var last_seen_age := 99.0
+
 func _ready() -> void :
-	name = "Red_" + str(bot_id + 1);bot_name = ["BÁO", "SÓI", "ƯNG", "CÁO"][bot_id];rng.seed = 4900 + bot_id * 71 + world.round_number * 313;collision_layer = 4;collision_mask = 1 | 4
+	name = "Red_" + str(bot_id + 1);bot_name = ["CHỈ HUY", "TIÊN PHONG", "THIỆN XẠ", "ĐÁNH VÒNG", "HỖ TRỢ"][bot_id];role = ["commander", "assault", "marksman", "flanker", "support"][bot_id];rng.seed = 4900 + bot_id * 71 + world.round_number * 313;collision_layer = 4;collision_mask = 1 | 4
 	var col = CollisionShape3D.new(); var capsule = CapsuleShape3D.new();capsule.height = 1.8;capsule.radius = 0.3;col.shape = capsule;col.position.y = 0.9;add_child(col)
 	visual = Game.model("soldier.glb");visual.scale = Vector3.ONE * 0.85;add_child(visual)
 	_setup_esp_visuals()
@@ -100,7 +113,7 @@ func _start_ik() -> void :
 func _animation(clip: String) -> void :
 	if anim and anim.has_animation(clip) and (anim.current_animation != clip or not anim.is_playing()): anim.play(clip, 0.16)
 func prepare_live() -> void :
-	visible_target = false;reaction = [1.25, 0.95, 0.55][Game.bot_difficulty] + bot_id * 0.06;cooldown = 0.15 + bot_id * 0.08;scan_clock = 0;resume_animation()
+	visible_target = false;reaction = EXTREME_REACTION;cooldown = 0.15 + bot_id * 0.08;scan_clock = 0;resume_animation()
 func halt() -> void :
 	velocity.x = 0;velocity.z = 0
 	if anim and not dead: anim.pause()
@@ -118,45 +131,87 @@ func can_see_player() -> bool:
 	return not hit.is_empty() and hit.collider == player
 func _physics_process(delta: float) -> void :
 	if dead or not world.playing: return
-	cooldown = maxf(0, cooldown - delta);repath -= delta;memory = maxf(0, memory - delta);scan_clock -= delta
+	cooldown = maxf(0, cooldown - delta);repath -= delta;memory = maxf(0, memory - delta);scan_clock -= delta;last_seen_age += delta;stance_clock -= delta;dodge_clock -= delta
 	if scan_clock <= 0:
 		scan_clock = 0.11
 		var sees = can_see_player()
-		if sees and not visible_target: reaction = [1.25, 0.95, 0.55][Game.bot_difficulty] + rng.randf_range(0, 0.2)
+		if sees and not visible_target: reaction = EXTREME_REACTION
 		visible_target = sees
-		if sees: last_known = player.global_position;memory = 7
+		if sees:
+			last_known = player.global_position;memory = 7;last_seen_age = 0.0
+			world.squad_report(player.global_position, bot_id)
 	if reload_time > 0:
 		reload_time = maxf(0, reload_time - delta);gun.reload(1 - reload_time / RELOAD_DURATION)
 		if reload_time <= 0:
 			var rounds = mini(MAG_SIZE - ammo, reserve);ammo += rounds;reserve -= rounds;gun.reload(0);_animation("idle")
-		velocity.x = move_toward(velocity.x, 0, delta * 12);velocity.z = move_toward(velocity.z, 0, delta * 12)
+		var retreat = _cover_direction()
+		velocity.x = move_toward(velocity.x, retreat.x * 1.6, delta * 12);velocity.z = move_toward(velocity.z, retreat.z * 1.6, delta * 12)
 	else: _decide(delta)
 	if not is_on_floor(): velocity.y -= 20 * delta
-	move_and_slide();recoil = move_toward(recoil, 0, delta * 4);aim_pivot.position.z = 0.2 - recoil * 0.025
+	move_and_slide()
+	# Animate stance with model transform; keep the weapon and hitbox aligned.
+	var stance_target = -0.43 if stance_clock > 0 else 0.0
+	crouch_amount = lerpf(crouch_amount, stance_target, minf(1.0, delta * 9.0))
+	visual.position.y = crouch_amount
+	lean_amount = lerpf(lean_amount, strafe_sign * 0.17 if dodge_clock > 0 else 0.0, minf(1.0, delta * 10.0))
+	visual.rotation.z = lean_amount
+	aim_pivot.position.y = 1.2 + crouch_amount
+	recoil = move_toward(recoil, 0, delta * 4);aim_pivot.position.z = 0.2 - recoil * 0.025
 	var moving = Vector2(velocity.x, velocity.z).length() > 0.3
 	if reload_time <= 0: _animation("aim_walk" if moving else "idle")
 	if moving and is_on_floor():
 		stride_clock -= delta
 		if stride_clock <= 0: steps.pitch_scale = rng.randf_range(0.9, 1.07);steps.play();stride_clock = 0.44
+func _cover_direction() -> Vector3:
+	if not is_instance_valid(player): return Vector3.ZERO
+	var away = global_position - player.global_position
+	away.y = 0
+	return away.normalized() if away.length_squared() > 0.01 else Vector3.ZERO
+
+func _role_goal() -> Vector3:
+	var known: Vector3 = world.squad_last_known
+	if not known.is_finite(): return _route_goal()
+	var to_target = known - global_position
+	to_target.y = 0
+	var forward = to_target.normalized() if to_target.length_squared() > 0.01 else Vector3.FORWARD
+	var side = Vector3(-forward.z, 0, forward.x)
+	match role:
+		"commander": return known - forward * 12.0
+		"assault": return known - forward * 3.0 + side * 2.0
+		"marksman": return known - forward * 16.0 - side * 7.0
+		"flanker": return known + side * 10.0 - forward * 1.5
+		"support": return known - forward * 10.0 + side * 5.0
+	return known
+
 func _decide(delta: float) -> void :
 	var direction = Vector3.ZERO
+	var known: Vector3 = world.squad_last_known
 	if visible_target:
-		var toward = target_point() - global_position; var horizontal = Vector3(toward.x, 0, toward.z)
-		rotation.y = lerp_angle(rotation.y, atan2(toward.x, toward.z), 1 - exp( - delta * 10))
-		aim_pivot.rotation.x = lerpf(aim_pivot.rotation.x, atan2(target_point().y - aim_pivot.global_position.y, maxf(horizontal.length(), 0.1)), 1 - exp( - delta * 12))
-		reaction = maxf(0, reaction - delta)
-		if horizontal.length() > 17: direction = _path_direction(last_known)
-		elif horizontal.length() < 5: direction = - horizontal.normalized() * 0.55
-		elif cooldown > 0.3 and burst_left == 3: direction = horizontal.normalized().cross(Vector3.UP) * (0.35 if bot_id % 2 == 0 else -0.35)
+		var toward = target_point() - global_position
+		var horizontal = Vector3(toward.x, 0, toward.z)
+		rotation.y = lerp_angle(rotation.y, atan2(toward.x, toward.z), 1.0 - exp(-delta * 10.0))
+		aim_pivot.rotation.x = lerpf(aim_pivot.rotation.x, atan2(target_point().y - aim_pivot.global_position.y, maxf(horizontal.length(), 0.1)), 1.0 - exp(-delta * 12.0))
+		reaction = maxf(0.0, reaction - delta)
+		if dodge_clock <= 0:
+			dodge_clock = rng.randf_range(0.65, 1.4)
+			strafe_sign = -strafe_sign if rng.randf() < 0.75 else strafe_sign
+			if rng.randf() < 0.42: stance_clock = rng.randf_range(0.3, 0.85)
+			elif is_on_floor() and rng.randf() < 0.18: velocity.y = 5.2
+		var lateral = horizontal.normalized().cross(Vector3.UP) * strafe_sign
+		var desired_range = 12.0 if role == "marksman" else (9.0 if role == "commander" else 6.0)
+		var radial = horizontal.normalized() * (0.65 if horizontal.length() > desired_range + 2.0 else (-0.8 if horizontal.length() < desired_range - 2.0 else 0.0))
+		direction = (lateral * 0.85 + radial).normalized()
 		if reaction <= 0 and cooldown <= 0:
 			if ammo <= 0: reload_weapon()
 			else: fire_at(target_point())
 	else:
-		var goal = last_known if memory > 0 and last_known.is_finite() else _route_goal();direction = _path_direction(goal)
-		if direction.length_squared() > 0.01: rotation.y = lerp_angle(rotation.y, atan2(direction.x, direction.z), 1 - exp( - delta * 7))
-		aim_pivot.rotation.x = lerpf(aim_pivot.rotation.x, 0, 1 - exp( - delta * 5))
-	var speed = 2.3 if visible_target else 2.65
-	velocity.x = move_toward(velocity.x, direction.x * speed, delta * 14);velocity.z = move_toward(velocity.z, direction.z * speed, delta * 14)
+		var goal = _role_goal() if known.is_finite() and world.squad_memory > 0 else (last_known if memory > 0 and last_known.is_finite() else _route_goal())
+		direction = _path_direction(goal)
+		if direction.length_squared() > 0.01: rotation.y = lerp_angle(rotation.y, atan2(direction.x, direction.z), 1.0 - exp(-delta * 7.0))
+		aim_pivot.rotation.x = lerpf(aim_pivot.rotation.x, 0.0, 1.0 - exp(-delta * 5.0))
+	var speed = 3.4 if visible_target else (3.2 if role == "flanker" else 2.8)
+	velocity.x = move_toward(velocity.x, direction.x * speed, delta * 14.0)
+	velocity.z = move_toward(velocity.z, direction.z * speed, delta * 14.0)
 func _route_goal() -> Vector3:
 	var route: Array = world.ROUTES[bot_id]
 	if waypoint < route.size():
@@ -178,7 +233,8 @@ func fire_at(target: Vector3, spread_override: float = -1) -> bool:
 	if burst_left <= 0: burst_left = 3
 	recoil = 1;gun.fire();sound.stream = Game.asset("mp5_shot.ogg");sound.pitch_scale = rng.randf_range(0.88, 1.07);sound.play()
 	var from: Vector3 = gun.muzzle.global_position; var direction = (target - from).normalized(); var right = direction.cross(Vector3.UP).normalized()
-	var spread = spread_override if spread_override >= 0 else [0.065, 0.042, 0.023][Game.bot_difficulty]
+	# 70% nominal hit probability: deliberately offset 30% of shots.
+	var spread = spread_override if spread_override >= 0 else (0.012 if rng.randf() < EXTREME_ACCURACY else 0.16)
 	direction = (direction + right * rng.randf_range( - spread, spread) + Vector3.UP * rng.randf_range( - spread, spread)).normalized()
 	var query = PhysicsRayQueryParameters3D.create(from, from + direction * 70, 1 | 2);query.exclude = [get_rid()]
 	var hit = get_world_3d().direct_space_state.intersect_ray(query); var end = hit.position if not hit.is_empty() else from + direction * 45
@@ -194,6 +250,9 @@ func take_hit(_amount: int, headshot: bool = false) -> void :
 	if dead or not world.playing: return
 	health = maxi(0, health - maxi(_amount, 0))
 	if health > 0:
+		stance_clock = 0.6
+		dodge_clock = 0.0
+		world.squad_report(player.global_position, bot_id)
 		# Không biến mất ở phát bắn đầu tiên; chỉ chết khi hết 500 HP.
 		if sound:
 			sound.stream = Game.asset("enemy_hurt.ogg")

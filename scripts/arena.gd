@@ -2,12 +2,24 @@ extends Node3D
 enum Phase{LOBBY, COUNTDOWN, LIVE, ROUND_OVER, MATCH_OVER}
 const TARGET_SCORE = 4
 const PLAYER_SPAWN = Vector3(-12, 0.15, 18)
-const BOT_SPAWNS = [Vector3(-13, 0.15, -20), Vector3(-5, 0.15, -22), Vector3(5, 0.15, -22), Vector3(13, 0.15, -20)]
+const BOT_SPAWNS = [Vector3(-13, 0.15, -20), Vector3(-5, 0.15, -22), Vector3(5, 0.15, -22), Vector3(13, 0.15, -20), Vector3(0, 0.15, -24)]
 const ROUTES = [
 	[Vector3(-13, 0, -12), Vector3(-14, 0, -3), Vector3(-12, 0, 10), Vector3(-12, 0, 18)], 
 	[Vector3(-5, 0, -13), Vector3(-7, 0, -3), Vector3(-5, 0, 7), Vector3(-10, 0, 17)], 
 	[Vector3(4, 0, -12), Vector3(5, 0, -2), Vector3(5, 0, 10), Vector3(-8, 0, 18)], 
-	[Vector3(16, 0, -12), Vector3(16, 0, 0), Vector3(15, 0, 16), Vector3(-10, 0, 18)]]
+	[Vector3(16, 0, -12), Vector3(16, 0, 0), Vector3(15, 0, 16), Vector3(-10, 0, 18)],
+	[Vector3(0, 0, -16), Vector3(0, 0, -7), Vector3(3, 0, 4), Vector3(0, 0, 15)]]
+var squad_last_known := Vector3.INF
+var squad_memory := 0.0
+var squad_commander_alive := true
+func squad_report(at: Vector3, _reporter: int) -> void:
+	squad_last_known = at
+	squad_memory = 8.0
+func _update_squad(delta: float) -> void:
+	squad_memory = maxf(0.0, squad_memory - delta)
+	if squad_memory <= 0: squad_last_known = Vector3.INF
+	if is_instance_valid(enemies) and enemies.get_child_count() > 0:
+		squad_commander_alive = not enemies.get_child(0).dead
 var player: CharacterBody3D
 var sun: DirectionalLight3D
 var preview: Camera3D
@@ -89,8 +101,9 @@ func apply_quality() -> void :
 	get_viewport().msaa_3d = Viewport.MSAA_2X if Game.quality == 2 else Viewport.MSAA_DISABLED
 	sun.shadow_enabled = Game.quality > 0;sun.directional_shadow_max_distance = 36 if Game.quality < 2 else 55;Game.apply_settings()
 func _spawn_team() -> void :
+	squad_last_known = Vector3.INF;squad_memory = 0.0
 	for enemy in enemies.get_children(): enemies.remove_child(enemy);enemy.queue_free()
-	for i in range(4):
+	for i in range(5):
 		var enemy = CharacterBody3D.new();enemy.set_script(preload("res://scripts/enemy.gd"));enemy.world = self;enemy.player = player;enemy.bot_id = i;enemy.position = BOT_SPAWNS[i];enemies.add_child(enemy)
 func alive_bots() -> int:
 	var count = 0
@@ -110,6 +123,7 @@ func begin_live() -> void :
 	phase = Phase.LIVE;phase_time = 0;playing = true;Game.hud.clear_controls()
 	for enemy in enemies.get_children(): enemy.prepare_live()
 func _process(delta: float) -> void :
+	if playing and not paused: _update_squad(delta)
 	if not in_match or paused: return
 	if phase == Phase.COUNTDOWN:
 		phase_time = maxf(0, phase_time - delta)
