@@ -13,7 +13,6 @@ const ESP_SHADER := preload("res://assets/oniroai/esp_enemy_green.gdshader")
 var esp_material: ShaderMaterial
 var esp_meshes: Array[MeshInstance3D] = []
 var esp_original_overlays: Dictionary = {}
-var esp_distance_label: Label3D
 var esp_active: bool = false
 var esp_update_clock: float = 0.0
 var anim: AnimationPlayer
@@ -73,21 +72,6 @@ func _setup_esp_visuals() -> void:
             continue
         esp_meshes.append(mesh)
         esp_original_overlays[mesh] = mesh.material_overlay
-    esp_distance_label = Label3D.new()
-    esp_distance_label.name = "ESP_Distance"
-    esp_distance_label.position = Vector3(0.0, 2.05, 0.0)
-    esp_distance_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-    esp_distance_label.no_depth_test = true
-    esp_distance_label.fixed_size = false
-    esp_distance_label.font = load("res://assets/fonts/DejaVuSans.ttf")
-    esp_distance_label.font_size = 26
-    esp_distance_label.pixel_size = 0.0018
-    esp_distance_label.modulate = Color("#5eff71")
-    esp_distance_label.outline_size = 5
-    esp_distance_label.outline_modulate = Color(0.015, 0.05, 0.025, 0.96)
-    esp_distance_label.text = "0 m"
-    esp_distance_label.visible = false
-    add_child(esp_distance_label)
 
 func _set_esp_active(enabled: bool) -> void:
     if esp_active == enabled:
@@ -96,22 +80,14 @@ func _set_esp_active(enabled: bool) -> void:
     for mesh in esp_meshes:
         if is_instance_valid(mesh):
             mesh.material_overlay = esp_material if enabled else esp_original_overlays.get(mesh)
-    if is_instance_valid(esp_distance_label):
-        esp_distance_label.visible = enabled
     esp_update_clock = 0.0
 
-func _process(delta: float) -> void:
+func _process(_delta: float) -> void:
     var enabled: bool = Game.esp_enabled and not dead and is_instance_valid(world) and world.playing and not world.paused
     if enabled != esp_active:
         _set_esp_active(enabled)
     if not enabled:
         return
-    esp_update_clock -= delta
-    if esp_update_clock <= 0.0 and is_instance_valid(player) and is_instance_valid(esp_distance_label):
-        esp_update_clock = 0.10
-        # Godot dùng đơn vị 3D mặc định là mét; tính khoảng cách player -> NPC.
-        var distance_m: int = roundi(player.global_position.distance_to(global_position))
-        esp_distance_label.text = "%d m" % distance_m
 
 func _bone(suffix: String) -> String:
 	for i in range(skeleton.get_bone_count()):

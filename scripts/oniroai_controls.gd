@@ -127,16 +127,11 @@ func _button(action: String, p: Vector2) -> void :
 		disc("fire_thumb", thumb, r * (0.44 - active * 0.025), alpha, Color.WHITE.lerp(Color("ffe2b0"), active * 0.25))
 		return
 	if action == "lean_left" or action == "lean_right":
-		var direction: float = -1.0 if action == "lean_left" else 1.0
 		var selected = (hud.world.player.lean_direction == -1 and action == "lean_left") or (hud.world.player.lean_direction == 1 and action == "lean_right")
 		var tone: Color = BLUE if selected else WHITE
-		draw_circle(p, r, Color(0.025, 0.045, 0.06, alpha * 0.85))
-		draw_arc(p, r - 2, 0, TAU, 56, tone, 2.8 if selected else 1.7, true)
-		draw_circle(p + Vector2(direction * 8, -12), 5.3, tone)
-		draw_line(p + Vector2(direction * 8, -5), p + Vector2(-direction * 2, 12), tone, 4, true)
-		draw_line(p + Vector2(-direction * 2, 12), p + Vector2(-direction * 11, 17), tone, 3, true)
-		draw_line(p + Vector2(-direction * 2, 12), p + Vector2(direction * 9, 17), tone, 3, true)
-		draw_line(p + Vector2(direction * 3, 1), p + Vector2(direction * 16, 0), tone, 2.6, true)
+		var pulse: float = hud.press_fx.get(action, 0)
+		var scale_value: float = 1 - active * 0.07 + pulse * 0.025
+		picture(action, Rect2(p - Vector2.ONE * r * scale_value, Vector2.ONE * r * 2.0 * scale_value), alpha, Color.WHITE.lerp(Color("cceff2"), active * 0.18 + (0.16 if selected else 0.0)))
 		text("NGHIÊNG TRÁI" if action == "lean_left" else "NGHIÊNG PHẢI", p + Vector2(0, r + 14), 11, tone, true)
 		return
 	var id = "fire_thumb" if action == "fire_left" else action
