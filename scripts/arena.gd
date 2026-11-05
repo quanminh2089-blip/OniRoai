@@ -1,13 +1,13 @@
 extends Node3D
 enum Phase{LOBBY, COUNTDOWN, LIVE, ROUND_OVER, MATCH_OVER}
 const TARGET_SCORE = 4
-const PLAYER_SPAWN = Vector3(-12, 0.15, 18)
-const BOT_SPAWNS = [Vector3(-13, 0.15, -20), Vector3(-5, 0.15, -22), Vector3(5, 0.15, -22), Vector3(13, 0.15, -20)]
+const PLAYER_SPAWN = Vector3(-27, 0.25, 0)
+const BOT_SPAWNS = [Vector3(26, 0.25, -9), Vector3(29, 0.25, -3), Vector3(26, 0.25, 5), Vector3(29, 0.25, 10)]
 const ROUTES = [
-	[Vector3(-13, 0, -12), Vector3(-14, 0, -3), Vector3(-12, 0, 10), Vector3(-12, 0, 18)], 
-	[Vector3(-5, 0, -13), Vector3(-7, 0, -3), Vector3(-5, 0, 7), Vector3(-10, 0, 17)], 
-	[Vector3(4, 0, -12), Vector3(5, 0, -2), Vector3(5, 0, 10), Vector3(-8, 0, 18)], 
-	[Vector3(16, 0, -12), Vector3(16, 0, 0), Vector3(15, 0, 16), Vector3(-10, 0, 18)]]
+	[Vector3(21, 0, -10), Vector3(10, 0, -10), Vector3(-8, 0, -7), Vector3(-25, 0, 0)],
+	[Vector3(22, 0, -3), Vector3(9, 0, -2), Vector3(-9, 0, -2), Vector3(-25, 0, 0)],
+	[Vector3(22, 0, 5), Vector3(8, 0, 5), Vector3(-10, 0, 5), Vector3(-25, 0, 0)],
+	[Vector3(22, 0, 10), Vector3(10, 0, 10), Vector3(-8, 0, 9), Vector3(-25, 0, 0)]]
 var player: CharacterBody3D
 var sun: DirectionalLight3D
 var preview: Camera3D
@@ -43,7 +43,7 @@ func _ready() -> void :
 	_navigation()
 	enemies = Node3D.new();enemies.name = "Enemies";add_child(enemies)
 	player = CharacterBody3D.new();player.set_script(preload("res://scripts/player.gd"));player.world = self;player.position = PLAYER_SPAWN;add_child(player)
-	preview = Camera3D.new();preview.position = Vector3(25, 14, 27);preview.far = 160;preview.cull_mask = 1;add_child(preview);preview.look_at(Vector3(0, 1, -2));preview.current = true
+	preview = Camera3D.new();preview.position = Vector3(-18, 18, 26);preview.far = 160;preview.cull_mask = 1;add_child(preview);preview.look_at(Vector3(0, 1, 0));preview.current = true
 	var hud = CanvasLayer.new();hud.set_script(preload("res://scripts/tactical_hud.gd"));hud.world = self;add_child(hud);Game.hud = hud
 	_spawn_team()
 	apply_quality()
@@ -65,7 +65,7 @@ func _collider(at: Vector3, size: Vector3, navigation: bool = true) -> void :
 	var col = CollisionShape3D.new(); var shape = BoxShape3D.new();shape.size = size;col.shape = shape;body.add_child(col);add_child(body)
 	if navigation: blocked.append(Rect2(Vector2(at.x - size.x / 2 - 0.4, at.z - size.z / 2 - 0.4), Vector2(size.x + 0.8, size.z + 0.8)))
 func _navigation() -> void :
-	astar.region = Rect2i(-22, -26, 45, 53);astar.cell_size = Vector2.ONE;astar.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES;astar.update()
+	astar.region = Rect2i(-40, -21, 90, 44);astar.cell_size = Vector2.ONE;astar.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES;astar.update()
 	for rect in blocked:
 		for x in range(floori(rect.position.x), ceili(rect.end.x) + 1):
 			for z in range(floori(rect.position.y), ceili(rect.end.y) + 1):
@@ -79,7 +79,7 @@ func free_cell(at: Vector3) -> Vector2i:
 			for z in range( - radius, radius + 1):
 				var next = cell + Vector2i(x, z)
 				if astar.is_in_boundsv(next) and not astar.is_point_solid(next): return next
-	return Vector2i(-12, 18)
+	return Vector2i(-27, 0)
 func path_between(from: Vector3, to: Vector3) -> PackedVector3Array:
 	var result = PackedVector3Array()
 	for cell in astar.get_id_path(free_cell(from), free_cell(to)): result.append(Vector3(cell.x, 0, cell.y))
@@ -154,7 +154,7 @@ func set_paused(value: bool) -> void :
 	if value: Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	if ambient: ambient.volume_db = -28 if value else -22
 func return_to_menu() -> void :
-	in_match = false;playing = false;paused = false;phase = Phase.LOBBY;Game.hud.clear_controls();preview.position = Vector3(25, 14, 27);preview.look_at(Vector3(0, 1, -2));preview.current = true;Game.hud.was_playing = false;Game.hud._main_menu()
+	in_match = false;playing = false;paused = false;phase = Phase.LOBBY;Game.hud.clear_controls();preview.position = Vector3(-18, 18, 26);preview.look_at(Vector3(0, 1, 0));preview.current = true;Game.hud.was_playing = false;Game.hud._main_menu()
 func heard_player_shot(at: Vector3) -> void :
 	for enemy in enemies.get_children():
 		if not enemy.dead and enemy.global_position.distance_to(at) < 22: enemy.hear(at)

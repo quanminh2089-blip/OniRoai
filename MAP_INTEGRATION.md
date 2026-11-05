@@ -1,10 +1,5 @@
-# Low-poly FPS Map integration (OniRoai v1.4.3)
+# OniRoai v1.4.4 — playable Low-poly FPS arena
 
-- Imported `assets/maps/low_poly_fps_map.glb` (user-supplied GLB).
-- Instantiated by `scripts/round_map.gd` in `_add_fps_district()`.
-- Original model bounding box approximately 200 x 6.25 x 69.75 meters.
-- Scale 0.35; origin (60, 0.12, 2), resulting X bounds approximately 29.2 to 99.2 meters.
-- Existing playable arena occupies approximately X -23..23 and Z -27..27. New district is positioned outside the east fence so it does not overlap the existing arena, spawns, or NPC routes.
-- This is an **exterior visual district**, not a new walkable combat area. Existing collision and A* pathing are retained. To make the new district playable, arena boundaries, ground collision, spawns, nav grid, and model collision must be redesigned.
-- The imported model is ~11 MB and may affect mobile GPU performance. Test Android build and in-game appearance; no Godot runtime test was performed here.
-- Check the original model's license/attribution before distributing the game.
+The supplied GLB is now the **main combat level**, replacing the old procedural ValleyOutpost ground, cover, fences, trees and props. The GLB is scaled to 0.42 and centered at (-5.08, 0.13, 2.1), with an approximately 84 × 29 m footprint. Player and four enemy spawns have been moved inside the new play area. An invisible outer boundary and safety floor prevent leaving the arena or falling through gaps. Imported mesh instances generate static trimesh collision for walls, buildings and props. Existing HUD, weapons, ESP and round rules remain intact.
+
+**Testing required:** Godot editor/runtime was not available here. Collision, spawn clearances, enemy pathfinding and Android performance must be verified on device. The existing A* grid uses approximate routes and does not yet derive obstacle occupancy from GLB mesh collision; enemies may get stuck at some walls. Verify model license/attribution before distribution.

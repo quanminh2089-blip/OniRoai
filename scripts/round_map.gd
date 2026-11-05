@@ -7,15 +7,11 @@ var rock_count = 0
 var fern_count = 0
 func build(arena: Node3D) -> void :
 	world = arena
-	name = "ValleyOutpost"
+	name = "LowPolyCombatArena"
 	library = Node3D.new()
 	library.set_script(preload("res://scripts/round_assets.gd"))
 	library.hide()
 	add_child(library)
-	_ground()
-	_cover()
-	_landscape()
-	_details()
 	_add_fps_district()
 	call_deferred("_batch")
 func pbr(name: String, tile: float = 0.5) -> StandardMaterial3D:
@@ -196,22 +192,32 @@ func _batch() -> void :
 		var node = MultiMeshInstance3D.new();node.multimesh = multi;add_child(node)
 	print("ROUND_MAP_READY trees=", tree_count, " rocks=", rock_count, " ferns=", fern_count, " batches=", groups.size())
 
-# Large 200 x 70 m imported district. Keep it outside the existing 46 x 54 m
-# combat arena rather than shrinking it into the player/NPC spawn corridors.
-# The existing perimeter fence separates the distant district from gameplay.
+# v1.4.4: the imported FPS level IS the playable arena, not background scenery.
+# Mesh collision is generated from the actual level geometry so buildings and
+# barriers block bullets and players. A flat safety floor catches mesh gaps.
 func _add_fps_district() -> void:
 	var scene: PackedScene = load("res://assets/maps/low_poly_fps_map.glb")
 	if scene == null:
-		push_warning("Low-poly FPS district asset missing")
+		push_error("Missing playable Low-poly FPS map")
 		return
-	var district := scene.instantiate() as Node3D
-	if district == null:
-		return
-	district.name = "LowPolyFPS_District"
-	# Source bounds: X -87.9..112.1, Y -0.28..5.97, Z -39.86..29.89.
-	# At 0.35 scale: X 29.2..99.2, outside the +23 m arena wall.
-	district.scale = Vector3.ONE * 0.35
-	district.position = Vector3(60.0, 0.12, 2.0)
+	var district = scene.instantiate() as Node3D
+	if district == null: return
+	district.name = "Playable_LowPoly_FPS_Map"
+	# Source extents X=-87.9..112.1, Z=-39.86..29.89.
+	# Center them around the arena, keeping a useful ~84 x 29 m play area.
+	district.scale = Vector3.ONE * 0.42
+	district.position = Vector3(-5.08, 0.13, 2.1)
 	add_child(district)
-	# Decorative exterior district: collision and A* inside the fenced arena
-	# remain unchanged; no inaccessible geometry is added to NPC routes.
+	_add_level_collision(district)
+	# Continuous ground collision beneath the level (not the old outpost).
+	world._collider(Vector3(0, -0.32, 0), Vector3(92, 0.5, 37), false)
+	# Invisible limits, outside the imported playable bounds.
+	for x in [-45.5, 45.5]: world._collider(Vector3(x, 2, 0), Vector3(0.5, 4, 39), false)
+	for z in [-18.5, 18.5]: world._collider(Vector3(0, 2, z), Vector3(92, 4, 0.5), false)
+
+func _add_level_collision(root: Node) -> void:
+	for child in root.get_children():
+		if child is MeshInstance3D and child.mesh != null:
+			# Imported mesh surfaces are used for accurate static collision.
+			child.create_trimesh_collision()
+		_add_level_collision(child)
