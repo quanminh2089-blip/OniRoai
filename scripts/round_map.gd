@@ -13,7 +13,7 @@ func build(arena: Node3D) -> void :
 	library.hide()
 	add_child(library)
 	_add_fps_district()
-	call_deferred("_batch")
+	# Disabled: batching deletes imported mesh collision bodies.
 func pbr(name: String, tile: float = 0.5) -> StandardMaterial3D:
 	if materials.has(name): return materials[name]
 	var mat = StandardMaterial3D.new()
