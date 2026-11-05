@@ -1,7 +1,7 @@
 extends Node
 
-const VERSION = "1.6.0"
-var bot_difficulty = 2
+const VERSION = "1.4.0"
+var bot_difficulty = 1
 var matches_played = 0
 var match_wins = 0
 var assets: Dictionary = {}
@@ -52,11 +52,7 @@ const ASSET_PATHS: = [
 
 func _ready() -> void :
 	settings.load("user://settings.cfg")
-	bot_difficulty = clampi(int(settings.get_value("rounds", "difficulty", 2)), 0, 2)
-	# Một lần chuyển sang cấu hình EXTREME đã chọn; không ghi đè lựa chọn về sau.
-	if int(settings.get_value("rounds", "tactical_ai_version", 0)) < 16:
-		bot_difficulty = 2
-		settings.set_value("rounds", "tactical_ai_version", 16)
+	bot_difficulty = clampi(int(settings.get_value("rounds", "difficulty", 1)), 0, 2)
 	matches_played = int(settings.get_value("rounds", "played", 0))
 	match_wins = int(settings.get_value("rounds", "wins", 0))
 	quality = int(settings.get_value("game", "quality", 1))

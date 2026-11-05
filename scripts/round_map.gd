@@ -16,6 +16,7 @@ func build(arena: Node3D) -> void :
 	_cover()
 	_landscape()
 	_details()
+	_add_fps_district()
 	call_deferred("_batch")
 func pbr(name: String, tile: float = 0.5) -> StandardMaterial3D:
 	if materials.has(name): return materials[name]
@@ -194,3 +195,23 @@ func _batch() -> void :
 		for i in range(multi.instance_count): multi.set_instance_transform(i, group.poses[i])
 		var node = MultiMeshInstance3D.new();node.multimesh = multi;add_child(node)
 	print("ROUND_MAP_READY trees=", tree_count, " rocks=", rock_count, " ferns=", fern_count, " batches=", groups.size())
+
+# Large 200 x 70 m imported district. Keep it outside the existing 46 x 54 m
+# combat arena rather than shrinking it into the player/NPC spawn corridors.
+# The existing perimeter fence separates the distant district from gameplay.
+func _add_fps_district() -> void:
+	var scene: PackedScene = load("res://assets/maps/low_poly_fps_map.glb")
+	if scene == null:
+		push_warning("Low-poly FPS district asset missing")
+		return
+	var district := scene.instantiate() as Node3D
+	if district == null:
+		return
+	district.name = "LowPolyFPS_District"
+	# Source bounds: X -87.9..112.1, Y -0.28..5.97, Z -39.86..29.89.
+	# At 0.35 scale: X 29.2..99.2, outside the +23 m arena wall.
+	district.scale = Vector3.ONE * 0.35
+	district.position = Vector3(60.0, 0.12, 2.0)
+	add_child(district)
+	# Decorative exterior district: collision and A* inside the fenced arena
+	# remain unchanged; no inaccessible geometry is added to NPC routes.

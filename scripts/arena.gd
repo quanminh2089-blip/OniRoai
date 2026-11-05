@@ -2,152 +2,12 @@ extends Node3D
 enum Phase{LOBBY, COUNTDOWN, LIVE, ROUND_OVER, MATCH_OVER}
 const TARGET_SCORE = 4
 const PLAYER_SPAWN = Vector3(-12, 0.15, 18)
-const BOT_SPAWNS = [Vector3(-13, 0.15, -20), Vector3(-5, 0.15, -22), Vector3(5, 0.15, -22), Vector3(13, 0.15, -20), Vector3(0, 0.15, -24)]
+const BOT_SPAWNS = [Vector3(-13, 0.15, -20), Vector3(-5, 0.15, -22), Vector3(5, 0.15, -22), Vector3(13, 0.15, -20)]
 const ROUTES = [
 	[Vector3(-13, 0, -12), Vector3(-14, 0, -3), Vector3(-12, 0, 10), Vector3(-12, 0, 18)], 
 	[Vector3(-5, 0, -13), Vector3(-7, 0, -3), Vector3(-5, 0, 7), Vector3(-10, 0, 17)], 
 	[Vector3(4, 0, -12), Vector3(5, 0, -2), Vector3(5, 0, 10), Vector3(-8, 0, 18)], 
-	[Vector3(16, 0, -12), Vector3(16, 0, 0), Vector3(15, 0, 16), Vector3(-10, 0, 18)],
-	[Vector3(0, 0, -16), Vector3(0, 0, -7), Vector3(3, 0, 4), Vector3(0, 0, 15)]]
-# Tactical AI v1.6: thông tin liên lạc dựa trên quan sát, không nhìn xuyên tường.
-var squad_last_known := Vector3.INF
-var squad_memory := 0.0
-var squad_commander_alive := true
-var squad_order_age := 0.0
-var squad_focus := Vector3.INF
-var squad_plan := "crossfire"
-var squad_damage_pressure := 0.0
-var squad_last_reporter := -1
-var squad_progress_age := 0.0
-
-func squad_report(at: Vector3, reporter: int) -> void:
-	if not at.is_finite(): return
-	squad_last_known = at
-	squad_memory = 7.0
-	squad_last_reporter = reporter
-	if squad_order_age <= 0.0:
-		_refresh_squad_plan()
-
-func squad_under_fire(at: Vector3, reporter: int) -> void:
-	squad_report(at, reporter)
-	squad_damage_pressure = minf(1.0, squad_damage_pressure + 0.22)
-	squad_order_age = 0.0
-
-func _refresh_squad_plan() -> void:
-	if not squad_last_known.is_finite(): return
-	squad_focus = squad_last_known
-	# Chỉ huy thay đổi thế trận; cả đội nhận lệnh từ dữ liệu quan sát chung.
-	var cycle := int(floor(elapsed / 8.0))
-	var plans := ["crossfire", "pinch", "pressure", "reposition"]
-	squad_plan = "pressure" if squad_progress_age > 13.0 else plans[(cycle + round_number) % plans.size()]
-	squad_order_age = 2.5 if squad_commander_alive else 4.5
-
-func squad_goal(bot_id: int) -> Vector3:
-	if not squad_focus.is_finite(): return Vector3.INF
-	var enemy_home := Vector3(0, 0, -19)
-	var forward := enemy_home - squad_focus
-	forward.y = 0.0
-	if forward.length_squared() < 0.1: forward = Vector3.FORWARD
-	forward = forward.normalized()
-	var side := Vector3(-forward.z, 0.0, forward.x)
-	var depth := [13.0, 6.5, 17.0, -1.5, 11.0][bot_id]
-	var lateral := [-2.0, 3.5, -9.0, 12.5, 8.0][bot_id]
-	if squad_plan == "pinch":
-		lateral *= 1.3
-	elif squad_plan == "pressure":
-		depth -= 3.0
-	elif squad_plan == "reposition":
-		lateral = -lateral
-	var raw := squad_focus + forward * depth + side * lateral
-	raw.x = clampf(raw.x, -20.0, 20.0)
-	raw.z = clampf(raw.z, -24.0, 24.0)
-	var cell := free_cell(raw)
-	return Vector3(cell.x, 0.0, cell.y)
-
-func squad_peek_window(bot_id: int) -> bool:
-	# Cửa sổ bắn lệch pha: giữ áp lực trong khi đồng đội di chuyển.
-	var offset := [0.0, 1.1, 2.1, 3.0, 4.0][bot_id]
-	var window := fposmod(elapsed + offset, 5.3)
-	return window < (2.7 if bot_id == 2 or bot_id == 4 else 2.1)
-
-func point_exposed(at: Vector3, threat: Vector3, low: bool = false) -> bool:
-	if not at.is_finite() or not threat.is_finite(): return false
-	var origin := threat + Vector3.UP * 1.4
-	var target := at + Vector3.UP * (0.85 if low else 1.45)
-	var query := PhysicsRayQueryParameters3D.create(origin, target, 1)
-	return get_world_3d().direct_space_state.intersect_ray(query).is_empty()
-
-func find_cover(from: Vector3, threat: Vector3, bot_id: int) -> Vector3:
-	if not threat.is_finite(): return Vector3.INF
-	var best := Vector3.INF
-	var best_score := -100000.0
-	var desired := [12.0, 7.0, 18.0, 10.0, 13.0][bot_id]
-	# Chỉ kiểm tra các ô ở rìa vật chắn thật có collider + đường đi hợp lệ.
-	for rect in blocked:
-		var cx := rect.position.x + rect.size.x * 0.5
-		var cz := rect.position.y + rect.size.y * 0.5
-		if Vector2(cx - from.x, cz - from.z).length() > 14.0: continue
-		var margin := 1.2
-		var positions := [
-			Vector3(rect.position.x - margin, 0, cz),
-			Vector3(rect.end.x + margin, 0, cz),
-			Vector3(cx, 0, rect.position.y - margin),
-			Vector3(cx, 0, rect.end.y + margin)
-		]
-		for candidate in positions:
-			var cell := Vector2i(roundi(candidate.x), roundi(candidate.z))
-			if not astar.is_in_boundsv(cell) or astar.is_point_solid(cell): continue
-			var dist_from := Vector2(candidate.x - from.x, candidate.z - from.z).length()
-			var dist_threat := Vector2(candidate.x - threat.x, candidate.z - threat.z).length()
-			if dist_from > 15.0 or dist_threat < 3.2 or dist_threat > 34.0: continue
-			if point_exposed(candidate, threat, true): continue
-			var path_to := path_between(from, candidate)
-			if path_to.size() == 0: continue
-			var crowded := false
-			for mate in enemies.get_children():
-				if mate.dead or mate.bot_id == bot_id: continue
-				if mate.global_position.distance_to(candidate) < 1.8:
-					crowded = true
-					break
-				if mate.cover_goal.is_finite() and mate.cover_goal.distance_to(candidate) < 1.8:
-					crowded = true
-					break
-			if crowded: continue
-			var score := 15.0 - dist_from * 0.82 - absf(dist_threat - desired) * 0.42 - float(path_to.size()) * 0.09
-			if score > best_score:
-				best_score = score
-				best = candidate
-	return best
-
-func find_peek(cover: Vector3, threat: Vector3, side_preference: float) -> Vector3:
-	if not cover.is_finite() or not threat.is_finite(): return Vector3.INF
-	var radial := threat - cover
-	radial.y = 0
-	if radial.length_squared() < 0.1: return Vector3.INF
-	radial = radial.normalized()
-	var side := Vector3(-radial.z, 0, radial.x)
-	for sign_dir in [side_preference, -side_preference]:
-		for distance in [1.7, 2.7, 3.8]:
-			var at := cover + side * distance * sign_dir + radial * 0.4
-			var cell := Vector2i(roundi(at.x), roundi(at.z))
-			if not astar.is_in_boundsv(cell) or astar.is_point_solid(cell): continue
-			if point_exposed(at, threat) and path_between(cover, at).size() > 0:
-				return at
-	return Vector3.INF
-
-func _update_squad(delta: float) -> void:
-	squad_memory = maxf(0.0, squad_memory - delta)
-	squad_order_age -= delta
-	squad_damage_pressure = maxf(0.0, squad_damage_pressure - delta * 0.06)
-	squad_progress_age += delta
-	if squad_memory <= 0.0:
-		squad_last_known = Vector3.INF
-		squad_focus = Vector3.INF
-	elif squad_order_age <= 0.0:
-		_refresh_squad_plan()
-	if is_instance_valid(enemies) and enemies.get_child_count() > 0:
-		squad_commander_alive = not enemies.get_child(0).dead
-
+	[Vector3(16, 0, -12), Vector3(16, 0, 0), Vector3(15, 0, 16), Vector3(-10, 0, 18)]]
 var player: CharacterBody3D
 var sun: DirectionalLight3D
 var preview: Camera3D
@@ -229,9 +89,8 @@ func apply_quality() -> void :
 	get_viewport().msaa_3d = Viewport.MSAA_2X if Game.quality == 2 else Viewport.MSAA_DISABLED
 	sun.shadow_enabled = Game.quality > 0;sun.directional_shadow_max_distance = 36 if Game.quality < 2 else 55;Game.apply_settings()
 func _spawn_team() -> void :
-	squad_last_known = Vector3.INF;squad_memory = 0.0;squad_focus = Vector3.INF;squad_order_age = 0.0;squad_damage_pressure = 0.0;squad_progress_age = 0.0
 	for enemy in enemies.get_children(): enemies.remove_child(enemy);enemy.queue_free()
-	for i in range(5):
+	for i in range(4):
 		var enemy = CharacterBody3D.new();enemy.set_script(preload("res://scripts/enemy.gd"));enemy.world = self;enemy.player = player;enemy.bot_id = i;enemy.position = BOT_SPAWNS[i];enemies.add_child(enemy)
 func alive_bots() -> int:
 	var count = 0
@@ -251,7 +110,6 @@ func begin_live() -> void :
 	phase = Phase.LIVE;phase_time = 0;playing = true;Game.hud.clear_controls()
 	for enemy in enemies.get_children(): enemy.prepare_live()
 func _process(delta: float) -> void :
-	if playing and not paused: _update_squad(delta)
 	if not in_match or paused: return
 	if phase == Phase.COUNTDOWN:
 		phase_time = maxf(0, phase_time - delta)
@@ -277,7 +135,6 @@ func end_round(winner: int) -> void :
 func enemy_killed(_at: Vector3, headshot: bool = false, bot_name: String = "ĐỎ") -> void :
 	if phase != Phase.LIVE or not playing: return
 	kills += 1;round_kills += 1;Game.hud.report_kill(headshot, bot_name)
-	squad_progress_age = 0.0
 	if alive_bots() == 0: end_round(0)
 func player_killed(killer: String = "ĐỘI ĐỎ") -> void :
 	if phase != Phase.LIVE or not playing: return
@@ -299,14 +156,8 @@ func set_paused(value: bool) -> void :
 func return_to_menu() -> void :
 	in_match = false;playing = false;paused = false;phase = Phase.LOBBY;Game.hud.clear_controls();preview.position = Vector3(25, 14, 27);preview.look_at(Vector3(0, 1, -2));preview.current = true;Game.hud.was_playing = false;Game.hud._main_menu()
 func heard_player_shot(at: Vector3) -> void :
-	var reporter := -1
 	for enemy in enemies.get_children():
-		if not enemy.dead and enemy.global_position.distance_to(at) < 22.0:
-			enemy.hear(at)
-			if reporter == -1: reporter = enemy.bot_id
-	# Liên lạc 100%: tiếng súng nghe được được chia sẻ, không tạo mục tiêu xuyên tường.
-	if reporter >= 0:
-		squad_report(at + Vector3(1.5, 0, -1.5), reporter)
+		if not enemy.dead and enemy.global_position.distance_to(at) < 22: enemy.hear(at)
 func heard_player_footstep(at: Vector3, crouched: bool) -> void :
 	for enemy in enemies.get_children():
 		if not enemy.dead and enemy.global_position.distance_to(at) < (3.0 if crouched else 9.0): enemy.hear(at)
