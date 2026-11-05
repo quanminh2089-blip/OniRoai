@@ -1,0 +1,49 @@
+{
+  "kind": "2D simplified controlled proxy, not Godot gameplay",
+  "rounds_each": 100,
+  "seed_start": 4900,
+  "rules": {
+    "npc_count": 5,
+    "npc_hp": 500,
+    "player_hp": 500,
+    "player_headshot_damage": 250,
+    "player_body_damage": 10,
+    "npc_bullet_damage": 10,
+    "reaction_ms": 500,
+    "npc_accuracy_nominal": 0.7,
+    "player_esp": true,
+    "player_aim_head": true,
+    "ticks_per_second": 10,
+    "round_timeout_s": 90.0
+  },
+  "variants": {
+    "baseline_v1.5": {
+      "player_wins": 100,
+      "npc_wins": 0,
+      "timeouts": 0,
+      "mean_round_seconds": 9.51,
+      "mean_bots_killed": 5.0,
+      "mean_player_remaining_hp": 500.0,
+      "rounds_using_cover": 0,
+      "rounds_with_dodge_response": 0,
+      "shots_player": 1382,
+      "headshots_player": 1000,
+      "shots_npc": 0,
+      "hits_npc": 0
+    },
+    "tactical_v1.6": {
+      "player_wins": 47,
+      "npc_wins": 53,
+      "timeouts": 0,
+      "mean_round_seconds": 29.43,
+      "mean_bots_killed": 3.93,
+      "mean_player_remaining_hp": 42.3,
+      "rounds_using_cover": 100,
+      "rounds_with_dodge_response": 100,
+      "shots_player": 10585,
+      "headshots_player": 870,
+      "shots_npc": 7195,
+      "hits_npc": 4577
+    }
+  }
+}

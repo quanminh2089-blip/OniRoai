@@ -36,9 +36,9 @@ jobs:
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
         run: |
           mkdir -p output
-          ./Godot_v4.5.1-stable_linux.x86_64 --headless --path . --export-debug Android output/OniRoai-v1.3.apk
+          ./Godot_v4.5.1-stable_linux.x86_64 --headless --path . --export-debug Android output/OniRoai-v1.6.0.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: OniRoai-v1.3-APK
+          name: OniRoai-v1.6.0-APK
           path: output/*.apk
           if-no-files-found: error

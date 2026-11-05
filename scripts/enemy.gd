@@ -55,10 +55,26 @@ var crouch_amount := 0.0
 var lean_amount := 0.0
 var tactical_goal := Vector3.INF
 var last_seen_age := 99.0
+# v1.6: chiến thuật theo trạng thái, dùng vật chắn và chia góc tấn công.
+var cover_goal := Vector3.INF
+var peek_goal := Vector3.INF
+var cover_refresh := 0.0
+var peek_refresh := 0.0
+var threatened_time := 0.0
+var dodge_time := 0.0
+var tactical_state := "ADVANCE"
+var combat_motion_time := 0.0
+var combat_motion_sign := 1.0
+var hit_count := 0
+var body_collision: CollisionShape3D
+var body_capsule: CapsuleShape3D
+var peek_side := 1.0
+var safe_last_known := Vector3.INF
+var recent_exposure := 0.0
 
 func _ready() -> void :
 	name = "Red_" + str(bot_id + 1);bot_name = ["CHỈ HUY", "TIÊN PHONG", "THIỆN XẠ", "ĐÁNH VÒNG", "HỖ TRỢ"][bot_id];role = ["commander", "assault", "marksman", "flanker", "support"][bot_id];rng.seed = 4900 + bot_id * 71 + world.round_number * 313;collision_layer = 4;collision_mask = 1 | 4
-	var col = CollisionShape3D.new(); var capsule = CapsuleShape3D.new();capsule.height = 1.8;capsule.radius = 0.3;col.shape = capsule;col.position.y = 0.9;add_child(col)
+	var col = CollisionShape3D.new(); var capsule = CapsuleShape3D.new();capsule.height = 1.8;capsule.radius = 0.3;col.shape = capsule;col.position.y = 0.9;add_child(col);body_collision = col;body_capsule = capsule
 	visual = Game.model("soldier.glb");visual.scale = Vector3.ONE * 0.85;add_child(visual)
 	_setup_esp_visuals()
 	anim = visual.find_children("*", "AnimationPlayer", true, false)[0];skeleton = visual.find_children("*", "Skeleton3D", true, false)[0]
@@ -112,8 +128,20 @@ func _start_ik() -> void :
 		for ik in ik_solvers: ik.start()
 func _animation(clip: String) -> void :
 	if anim and anim.has_animation(clip) and (anim.current_animation != clip or not anim.is_playing()): anim.play(clip, 0.16)
-func prepare_live() -> void :
-	visible_target = false;reaction = EXTREME_REACTION;cooldown = 0.15 + bot_id * 0.08;scan_clock = 0;resume_animation()
+func prepare_live() -> void:
+	visible_target = false
+	reaction = EXTREME_REACTION
+	cooldown = 0.15 + bot_id * 0.08
+	scan_clock = 0.0
+	cover_refresh = 0.0
+	peek_refresh = 0.0
+	threatened_time = 0.0
+	dodge_time = 0.0
+	combat_motion_time = 0.0
+	cover_goal = Vector3.INF
+	peek_goal = Vector3.INF
+	recent_exposure = 0.0
+	resume_animation()
 func halt() -> void :
 	velocity.x = 0;velocity.z = 0
 	if anim and not dead: anim.pause()
@@ -124,44 +152,74 @@ func hear(at: Vector3) -> void :
 func target_point() -> Vector3: return player.global_position + Vector3.UP * (0.76 if player.crouching else 1.2)
 func can_see_player() -> bool:
 	if dead or player.health <= 0: return false
-	var at = global_position + Vector3.UP * 1.52; var target = target_point()
-	if at.distance_to(target) > [22.0, 26.0, 30.0][Game.bot_difficulty]: return false
-	var query = PhysicsRayQueryParameters3D.create(at, target, 1 | 2);query.exclude = [get_rid()]
-	var hit = get_world_3d().direct_space_state.intersect_ray(query)
+	var at := global_position + Vector3.UP * (1.05 if crouch_amount < -0.2 else 1.52)
+	var target := target_point()
+	var detection := [29.0, 34.0, 40.0][Game.bot_difficulty]
+	if role == "marksman": detection += 6.0
+	if at.distance_to(target) > detection: return false
+	var query := PhysicsRayQueryParameters3D.create(at, target, 1 | 2)
+	query.exclude = [get_rid()]
+	var hit := get_world_3d().direct_space_state.intersect_ray(query)
 	return not hit.is_empty() and hit.collider == player
-func _physics_process(delta: float) -> void :
+func _physics_process(delta: float) -> void:
 	if dead or not world.playing: return
-	cooldown = maxf(0, cooldown - delta);repath -= delta;memory = maxf(0, memory - delta);scan_clock -= delta;last_seen_age += delta;stance_clock -= delta;dodge_clock -= delta
-	if scan_clock <= 0:
-		scan_clock = 0.11
-		var sees = can_see_player()
+	cooldown = maxf(0.0, cooldown - delta)
+	repath -= delta
+	memory = maxf(0.0, memory - delta)
+	scan_clock -= delta
+	last_seen_age += delta
+	stance_clock -= delta
+	dodge_clock -= delta
+	cover_refresh -= delta
+	peek_refresh -= delta
+	threatened_time = maxf(0.0, threatened_time - delta)
+	dodge_time = maxf(0.0, dodge_time - delta)
+	combat_motion_time -= delta
+	if scan_clock <= 0.0:
+		scan_clock = 0.12 + float(bot_id) * 0.013
+		var sees := can_see_player()
 		if sees and not visible_target: reaction = EXTREME_REACTION
 		visible_target = sees
 		if sees:
-			last_known = player.global_position;memory = 7;last_seen_age = 0.0
+			last_known = player.global_position
+			memory = 7.0
+			last_seen_age = 0.0
 			world.squad_report(player.global_position, bot_id)
-	if reload_time > 0:
-		reload_time = maxf(0, reload_time - delta);gun.reload(1 - reload_time / RELOAD_DURATION)
-		if reload_time <= 0:
-			var rounds = mini(MAG_SIZE - ammo, reserve);ammo += rounds;reserve -= rounds;gun.reload(0);_animation("idle")
-		var retreat = _cover_direction()
-		velocity.x = move_toward(velocity.x, retreat.x * 1.6, delta * 12);velocity.z = move_toward(velocity.z, retreat.z * 1.6, delta * 12)
-	else: _decide(delta)
-	if not is_on_floor(): velocity.y -= 20 * delta
+	if reload_time > 0.0:
+		reload_time = maxf(0.0, reload_time - delta)
+		gun.reload(1.0 - reload_time / RELOAD_DURATION)
+		if reload_time <= 0.0:
+			var rounds := mini(MAG_SIZE - ammo, reserve)
+			ammo += rounds
+			reserve -= rounds
+			gun.reload(0)
+			_animation("idle")
+		# Không quay lưng bỏ chạy khi nạp: tìm chỗ che hoặc di chuyển ngang.
+		_reload_movement(delta)
+	else:
+		_decide(delta)
+	if not is_on_floor(): velocity.y -= 20.0 * delta
 	move_and_slide()
-	# Animate stance with model transform; keep the weapon and hitbox aligned.
-	var stance_target = -0.43 if stance_clock > 0 else 0.0
-	crouch_amount = lerpf(crouch_amount, stance_target, minf(1.0, delta * 9.0))
-	visual.position.y = crouch_amount
-	lean_amount = lerpf(lean_amount, strafe_sign * 0.17 if dodge_clock > 0 else 0.0, minf(1.0, delta * 10.0))
+	# Hitbox thật đi theo tư thế NPC, tránh kiểu ngồi chỉ dịch model.
+	var stance_target := -0.34 if stance_clock > 0.0 or tactical_state == "COVER" else 0.0
+	crouch_amount = lerpf(crouch_amount, stance_target, minf(1.0, delta * 8.0))
+	var crouch_ratio := clampf(-crouch_amount / 0.34, 0.0, 1.0)
+	visual.scale.y = 0.85 * (1.0 - crouch_ratio * 0.24)
+	body_capsule.height = 1.8 - crouch_ratio * 0.43
+	body_collision.position.y = body_capsule.height * 0.5
+	lean_amount = lerpf(lean_amount, combat_motion_sign * 0.12 if dodge_time > 0.0 else 0.0, minf(1.0, delta * 9.0))
 	visual.rotation.z = lean_amount
 	aim_pivot.position.y = 1.2 + crouch_amount
-	recoil = move_toward(recoil, 0, delta * 4);aim_pivot.position.z = 0.2 - recoil * 0.025
-	var moving = Vector2(velocity.x, velocity.z).length() > 0.3
-	if reload_time <= 0: _animation("aim_walk" if moving else "idle")
+	recoil = move_toward(recoil, 0.0, delta * 4.0)
+	aim_pivot.position.z = 0.2 - recoil * 0.025
+	var moving := Vector2(velocity.x, velocity.z).length() > 0.3
+	if reload_time <= 0.0: _animation("aim_walk" if moving else "idle")
 	if moving and is_on_floor():
 		stride_clock -= delta
-		if stride_clock <= 0: steps.pitch_scale = rng.randf_range(0.9, 1.07);steps.play();stride_clock = 0.44
+		if stride_clock <= 0.0:
+			steps.pitch_scale = rng.randf_range(0.9, 1.07)
+			steps.play()
+			stride_clock = 0.44
 func _cover_direction() -> Vector3:
 	if not is_instance_valid(player): return Vector3.ZERO
 	var away = global_position - player.global_position
@@ -169,49 +227,128 @@ func _cover_direction() -> Vector3:
 	return away.normalized() if away.length_squared() > 0.01 else Vector3.ZERO
 
 func _role_goal() -> Vector3:
-	var known: Vector3 = world.squad_last_known
-	if not known.is_finite(): return _route_goal()
-	var to_target = known - global_position
-	to_target.y = 0
-	var forward = to_target.normalized() if to_target.length_squared() > 0.01 else Vector3.FORWARD
-	var side = Vector3(-forward.z, 0, forward.x)
-	match role:
-		"commander": return known - forward * 12.0
-		"assault": return known - forward * 3.0 + side * 2.0
-		"marksman": return known - forward * 16.0 - side * 7.0
-		"flanker": return known + side * 10.0 - forward * 1.5
-		"support": return known - forward * 10.0 + side * 5.0
-	return known
+	if world.squad_memory > 0.0:
+		return world.squad_goal(bot_id)
+	return _route_goal()
+func _reload_movement(delta: float) -> void:
+	var goal := cover_goal
+	if not goal.is_finite() and world.squad_memory > 0.0:
+		goal = _role_goal()
+	var direction := _path_direction(goal) if goal.is_finite() else _cover_direction()
+	if direction.length_squared() < 0.01: direction = _cover_direction()
+	velocity.x = move_toward(velocity.x, direction.x * 2.5, delta * 14.0)
+	velocity.z = move_toward(velocity.z, direction.z * 2.5, delta * 14.0)
+	stance_clock = maxf(stance_clock, 0.28)
 
-func _decide(delta: float) -> void :
-	var direction = Vector3.ZERO
-	var known: Vector3 = world.squad_last_known
+func _pick_cover(threat: Vector3) -> void:
+	if cover_refresh > 0.0: return
+	cover_refresh = rng.randf_range(1.5, 2.4)
+	var selected: Vector3 = world.find_cover(global_position, threat, bot_id)
+	if selected.is_finite():
+		cover_goal = selected
+		repath = 0.0
+		peek_goal = Vector3.INF
+		peek_refresh = 0.0
+
+func _peek_target(threat: Vector3) -> Vector3:
+	if peek_refresh > 0.0 and peek_goal.is_finite(): return peek_goal
+	peek_refresh = rng.randf_range(1.0, 1.6)
+	peek_side = -peek_side if rng.randf() < 0.4 else peek_side
+	peek_goal = world.find_peek(cover_goal, threat, peek_side)
+	repath = 0.0
+	return peek_goal
+
+func _combat_dodge(delta: float, toward: Vector3) -> Vector3:
+	if combat_motion_time <= 0.0:
+		combat_motion_time = rng.randf_range(0.45, 1.0)
+		combat_motion_sign = -combat_motion_sign if rng.randf() < 0.8 else combat_motion_sign
+		if rng.randf() < 0.35 or threatened_time > 1.5:
+			stance_clock = rng.randf_range(0.35, 0.7)
+		elif is_on_floor() and rng.randf() < 0.12:
+			velocity.y = 5.5
+	var lateral := Vector3(-toward.z, 0.0, toward.x) * combat_motion_sign
+	var length_h := Vector2(player.position.x - position.x, player.position.z - position.z).length()
+	var desired := [11.0, 6.5, 17.0, 9.0, 12.0][bot_id]
+	var radial := toward * (0.6 if length_h > desired + 2.0 else (-0.6 if length_h < desired - 2.0 else 0.0))
+	return (lateral * 0.8 + radial).normalized()
+
+func _decide(delta: float) -> void:
+	var threat: Vector3 = world.squad_last_known if world.squad_memory > 0.0 else last_known
+	var has_contact := threat.is_finite() and (world.squad_memory > 0.0 or memory > 0.0)
+	var direction := Vector3.ZERO
+	var goal := Vector3.INF
+	tactical_state = "ADVANCE"
 	if visible_target:
-		var toward = target_point() - global_position
-		var horizontal = Vector3(toward.x, 0, toward.z)
+		var toward := target_point() - global_position
+		var planar := Vector3(toward.x, 0.0, toward.z)
 		rotation.y = lerp_angle(rotation.y, atan2(toward.x, toward.z), 1.0 - exp(-delta * 10.0))
-		aim_pivot.rotation.x = lerpf(aim_pivot.rotation.x, atan2(target_point().y - aim_pivot.global_position.y, maxf(horizontal.length(), 0.1)), 1.0 - exp(-delta * 12.0))
+		aim_pivot.rotation.x = lerpf(aim_pivot.rotation.x, atan2(target_point().y - aim_pivot.global_position.y, maxf(planar.length(), 0.1)), 1.0 - exp(-delta * 12.0))
 		reaction = maxf(0.0, reaction - delta)
-		if dodge_clock <= 0:
-			dodge_clock = rng.randf_range(0.65, 1.4)
-			strafe_sign = -strafe_sign if rng.randf() < 0.75 else strafe_sign
-			if rng.randf() < 0.42: stance_clock = rng.randf_range(0.3, 0.85)
-			elif is_on_floor() and rng.randf() < 0.18: velocity.y = 5.2
-		var lateral = horizontal.normalized().cross(Vector3.UP) * strafe_sign
-		var desired_range = 12.0 if role == "marksman" else (9.0 if role == "commander" else 6.0)
-		var radial = horizontal.normalized() * (0.65 if horizontal.length() > desired_range + 2.0 else (-0.8 if horizontal.length() < desired_range - 2.0 else 0.0))
-		direction = (lateral * 0.85 + radial).normalized()
-		if reaction <= 0 and cooldown <= 0:
-			if ammo <= 0: reload_weapon()
-			else: fire_at(target_point())
 	else:
-		var goal = _role_goal() if known.is_finite() and world.squad_memory > 0 else (last_known if memory > 0 and last_known.is_finite() else _route_goal())
-		direction = _path_direction(goal)
-		if direction.length_squared() > 0.01: rotation.y = lerp_angle(rotation.y, atan2(direction.x, direction.z), 1.0 - exp(-delta * 7.0))
 		aim_pivot.rotation.x = lerpf(aim_pivot.rotation.x, 0.0, 1.0 - exp(-delta * 5.0))
-	var speed = 3.4 if visible_target else (3.2 if role == "flanker" else 2.8)
+	# Người bị bắn phải tìm vật chắn. Các vai trò giữ vị trí hỗ trợ khi có giao tranh.
+	var force_push := world.squad_progress_age > 13.0 and threatened_time <= 0.0
+	var prefer_cover := (role in ["commander", "marksman", "support"] and not force_push) or threatened_time > 0.0 or health < 220
+	if has_contact and prefer_cover:
+		_pick_cover(threat)
+	if has_contact and cover_goal.is_finite() and prefer_cover:
+		var distance_to_cover := Vector2(cover_goal.x - global_position.x, cover_goal.z - global_position.z).length()
+		if distance_to_cover > 1.2:
+			tactical_state = "RELOCATE"
+			goal = cover_goal
+		else:
+			var is_hidden := not world.point_exposed(global_position, threat, true)
+			var do_peek := world.squad_peek_window(bot_id) and threatened_time < 0.65
+			if is_hidden and not do_peek:
+				tactical_state = "COVER"
+				stance_clock = maxf(stance_clock, 0.3)
+			elif is_hidden and do_peek:
+				var peek := _peek_target(threat)
+				if peek.is_finite():
+					tactical_state = "PEEK"
+					goal = peek
+				else:
+					goal = _role_goal()
+			else:
+				tactical_state = "EXPOSED"
+				goal = cover_goal if threatened_time > 0.0 else _role_goal()
+	elif has_contact:
+		tactical_state = "FLANK" if role == "flanker" else "PRESSURE"
+		goal = _role_goal()
+	else:
+		goal = _route_goal()
+	# Không chạy xuyên tường: tất cả mục tiêu chiến thuật đi qua A*.
+	if goal.is_finite() and tactical_state != "COVER":
+		direction = _path_direction(goal)
+	elif visible_target and tactical_state != "COVER":
+		var toward_player := player.global_position - global_position
+		toward_player.y = 0.0
+		if toward_player.length_squared() > 0.01:
+			direction = _combat_dodge(delta, toward_player.normalized())
+	if visible_target and tactical_state in ["PRESSURE", "FLANK", "EXPOSED"]:
+		var toward_player := player.global_position - global_position
+		toward_player.y = 0.0
+		if toward_player.length_squared() > 0.1:
+			var evasive := _combat_dodge(delta, toward_player.normalized())
+			# Va chạm vật cản trong lối né để không tự chạy vào tường.
+			var query := PhysicsRayQueryParameters3D.create(global_position + Vector3.UP, global_position + Vector3.UP + evasive * 1.4, 1)
+			if get_world_3d().direct_space_state.intersect_ray(query).is_empty():
+				direction = (direction * 0.8 + evasive * (0.7 if threatened_time > 0.0 else 0.35)).normalized()
+	if visible_target and tactical_state == "EXPOSED" and threatened_time > 0.0:
+		var away := _cover_direction()
+		direction = (direction + away * 0.65).normalized()
+	if not visible_target and direction.length_squared() > 0.01:
+		rotation.y = lerp_angle(rotation.y, atan2(direction.x, direction.z), 1.0 - exp(-delta * 7.0))
+	var speed := 3.8 if role == "flanker" else (3.4 if role == "assault" else 3.0)
+	if tactical_state == "RELOCATE" or tactical_state == "FLANK": speed *= 1.25
+	if tactical_state == "COVER": speed = 0.0
 	velocity.x = move_toward(velocity.x, direction.x * speed, delta * 14.0)
 	velocity.z = move_toward(velocity.z, direction.z * speed, delta * 14.0)
+	# Chỉ bắn khi nhìn thấy mục tiêu thật, đã phản ứng đủ 500 ms.
+	# Từ điểm nấp không xả đạn xuyên tường; khi thay đạn tiếp tục giữ đội hình.
+	if visible_target and tactical_state != "COVER" and reaction <= 0.0 and cooldown <= 0.0:
+		if ammo <= 0: reload_weapon()
+		else: fire_at(target_point())
 func _route_goal() -> Vector3:
 	var route: Array = world.ROUTES[bot_id]
 	if waypoint < route.size():
@@ -241,7 +378,9 @@ func fire_at(target: Vector3, spread_override: float = -1) -> bool:
 	world.tracer(from, end, true);last_hit_player = not hit.is_empty() and hit.collider == player
 	if not hit.is_empty():
 		world.impact(hit.position, hit.normal)
-		if last_hit_player: player.take_damage(BULLET_DAMAGE, global_position, bot_name)
+		if last_hit_player:
+			world.squad_progress_age = 0.0
+			player.take_damage(BULLET_DAMAGE, global_position, bot_name)
 	return last_hit_player
 func reload_weapon() -> void :
 	if dead or reload_time > 0 or reserve <= 0 or ammo == MAG_SIZE: return
@@ -249,10 +388,16 @@ func reload_weapon() -> void :
 func take_hit(_amount: int, headshot: bool = false) -> void :
 	if dead or not world.playing: return
 	health = maxi(0, health - maxi(_amount, 0))
+	hit_count += 1
+	world.squad_progress_age = 0.0
+	threatened_time = 3.5
+	cover_refresh = 0.0
+	dodge_time = 0.65
+	combat_motion_time = 0.0
 	if health > 0:
 		stance_clock = 0.6
 		dodge_clock = 0.0
-		world.squad_report(player.global_position, bot_id)
+		world.squad_under_fire(player.global_position + Vector3(rng.randf_range(-1.5, 1.5), 0, rng.randf_range(-1.5, 1.5)), bot_id)
 		# Không biến mất ở phát bắn đầu tiên; chỉ chết khi hết 500 HP.
 		if sound:
 			sound.stream = Game.asset("enemy_hurt.ogg")
